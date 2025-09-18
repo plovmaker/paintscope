@@ -1,0 +1,174 @@
+# ============================================
+# SECURITY - NEVER COMMIT THESE
+# ============================================
+
+# Environment variables and secrets
+.env
+.env.*
+.env.local
+.env.supabase
+*.env
+secrets.toml
+.streamlit/secrets.toml
+
+# ============================================
+# DATABASE FILES - DON'T COMMIT
+# ============================================
+
+# SQLite databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+paint_estimator.db
+paintscope.db
+
+# ============================================
+# LARGE FILES - SAMPLE DATA
+# ============================================
+
+# PDF files (sample data)
+*.pdf
+*.PDF
+
+# Excel files
+*.xlsx
+*.xls
+*.xlsm
+
+# Images (sample data)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+
+# CSV files
+*.csv
+
+# ============================================
+# PYTHON
+# ============================================
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# PyCharm
+.idea/
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# ============================================
+# SYSTEM FILES
+# ============================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
+
+# ============================================
+# TEMPORARY FILES
+# ============================================
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Temp files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+
+# ============================================
+# BUILD/DIST
+# ============================================
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# ============================================
+# DEVELOPMENT/TEST FILES  
+# ============================================
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# ============================================
+# PROJECT SPECIFIC - OLD/UNUSED FILES
+# ============================================
+
+# Old packaging files
+.package-ignore
+package_for_sharing.sh
+
+# Text output files
+relevant_pages.txt
+filtered_pages.csv
+
+# Old database files
+database.py  # if exists
+
+# ============================================
+# DEPLOYMENT SCRIPTS - LOCAL USE ONLY
+# ============================================
+
+# Deployment scripts (only for local use)
+deploy.sh
+deploy_*.sh
+cleanup.sh
+
+# Deployment documentation (can be kept locally)
+DEPLOY_STEPS.md
+DEPLOYMENT.md
+DEPLOY_QUICK.md
+
+# Test scripts
+test_supabase.py
+
+# Platform-specific configs (not needed in repo)
+nixpacks.toml
+railway.json

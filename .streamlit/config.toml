@@ -1,0 +1,25 @@
+# PaintScope Streamlit Configuration
+
+[theme]
+# Modern, professional theme for PaintScope
+primaryColor = "#1E88E5"  # Professional blue
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor = "#262730"
+font = "sans serif"
+
+[server]
+# Maximum file upload size in MB (200MB for large PDFs)
+maxUploadSize = 200
+
+# Security settings
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+# Privacy settings
+gatherUsageStats = false
+
+[client]
+# Show sidebar by default
+showSidebarNavigation = true
