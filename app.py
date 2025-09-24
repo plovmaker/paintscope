@@ -1,23 +1,26 @@
 """
 PaintScope - Main Application
 AI-Powered Painting Scope Analysis with Authentication and Data Persistence
+Optimized for memory efficiency
 """
 
+from dotenv import load_dotenv
 import streamlit as st
 from openai import OpenAI
 import os
-import base64
-import fitz  # PyMuPDF
+import gc
 from typing import List, Dict, Optional
-import tempfile
-from PIL import Image
-import io
 from datetime import datetime
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Import our modules
 import auth
 import db_service
 from models import init_db
+from pdf_processor import StreamlitPDFManager
+from memory_utils import SessionStateManager, MemoryMonitor, cleanup_old_pdfs_from_session
 
 # Initialize database
 init_db()
@@ -41,12 +44,14 @@ if 'current_pdf_id' not in st.session_state:
     st.session_state.current_pdf_id = None
 if 'current_conversation_id' not in st.session_state:
     st.session_state.current_conversation_id = None
-if 'pdf_images' not in st.session_state:
-    st.session_state.pdf_images = None
+# Do NOT pre-allocate large lists; only set when needed
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'page' not in st.session_state:
     st.session_state.page = "main"
+
+# Initialize PDF manager
+pdf_manager = StreamlitPDFManager()
 
 # System instructions for the assistant
 # Get system prompt from environment variable or use default
@@ -193,43 +198,9 @@ Your duty as THE BEST COMMERCIAL PAINTING AI ASSISTANT IN THE WORLD is to be acc
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
 
 
-def pdf_to_images(pdf_bytes, max_pages=50):
-    """Convert PDF to images for analysis."""
-    images = []
-    
-    # Open PDF
-    pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
-    
-    # Limit pages to process
-    num_pages = min(len(pdf_document), max_pages)
-    
-    for page_num in range(num_pages):
-        # Get the page
-        page = pdf_document[page_num]
-        
-        # Render page to image (increase resolution for better quality)
-        mat = fitz.Matrix(2.0, 2.0)  # 2x scale for better quality
-        pix = page.get_pixmap(matrix=mat)
-        
-        # Convert to PIL Image
-        img_data = pix.tobytes("png")
-        img = Image.open(io.BytesIO(img_data))
-        
-        # Convert to base64
-        buffered = io.BytesIO()
-        img.save(buffered, format="PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        
-        images.append({
-            "page_num": page_num + 1,
-            "base64": img_base64
-        })
-    
-    pdf_document.close()
-    return images, num_pages
 
 
-def analyze_pdf_with_gpt(images, initial_prompt):
+def analyze_pdf_with_gpt(page_images: Dict[int, str], initial_prompt: str):
     """Analyze PDF pages using GPT-4 Vision."""
     
     # Prepare messages with system prompt
@@ -241,12 +212,12 @@ def analyze_pdf_with_gpt(images, initial_prompt):
     content = [{"type": "text", "text": initial_prompt}]
     
     # Add first 10 pages as images (to stay within token limits)
-    pages_to_analyze = min(10, len(images))
+    pages_to_analyze = min(10, len(page_images))
     for i in range(pages_to_analyze):
         content.append({
             "type": "image_url",
             "image_url": {
-                "url": f"data:image/png;base64,{images[i]['base64']}",
+                "url": f"data:image/png;base64,{page_images[i]}",
                 "detail": "high"
             }
         })
@@ -264,32 +235,43 @@ def analyze_pdf_with_gpt(images, initial_prompt):
     return response.choices[0].message.content
 
 
-def chat_with_context(messages_history, user_input, images=None):
+def chat_with_context(messages_history, user_input, pdf_id=None):
     """Continue conversation with context."""
     
     # Add the new user message
     new_message = {"role": "user", "content": user_input}
     messages_history.append(new_message)
     
-    # If images are provided and this is about specific pages, include them
-    if images and any(keyword in user_input.lower() for keyword in ["page", "show", "where", "location"]):
-        # Extract page numbers if mentioned
-        import re
-        page_nums = re.findall(r'page\s*(\d+)', user_input.lower())
+    # Get PDF data if needed for specific page references
+    if pdf_id and any(keyword in user_input.lower() for keyword in ["page", "show", "where", "location"]):
+        # Get PDF from database
+        pdf_data = db_service.get_pdf_by_id(pdf_id, st.session_state.user_id)
         
-        if page_nums:
-            content = [{"type": "text", "text": user_input}]
-            for page_num in page_nums[:3]:  # Limit to 3 pages
-                page_idx = int(page_num) - 1
-                if 0 <= page_idx < len(images):
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{images[page_idx]['base64']}",
-                            "detail": "high"
-                        }
-                    })
-            messages_history[-1]["content"] = content
+        if pdf_data:
+            # Extract page numbers
+            import re
+            page_nums = re.findall(r'page\s*(\d+)', user_input.lower())
+            
+            if page_nums:
+                # Convert pages on demand
+                page_nums = [int(num) - 1 for num in page_nums[:3]]  # Limit to 3 pages
+                page_images = pdf_manager.get_pages_on_demand(pdf_data['file_data'], page_nums)
+                
+                # Add images to message content
+                content = [{"type": "text", "text": user_input}]
+                for page_num in page_nums:
+                    if page_num in page_images:
+                        content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{page_images[page_num]}",
+                                "detail": "high"
+                            }
+                        })
+                messages_history[-1]["content"] = content
+    
+    # Check and optimize message history size
+    SessionStateManager.optimize_messages()
     
     # Call GPT-4
     response = client.chat.completions.create(
@@ -302,12 +284,18 @@ def chat_with_context(messages_history, user_input, images=None):
     assistant_response = response.choices[0].message.content
     messages_history.append({"role": "assistant", "content": assistant_response})
     
+    # Check memory usage after response
+    SessionStateManager.auto_cleanup()
+    
     return assistant_response
 
 
 def main_app():
     """Main application interface"""
-    st.title("🎯 PaintScope")
+    st.title("🏹 PaintScope")
+    
+    # Memory monitoring
+    MemoryMonitor.display_memory_widget('sidebar')
     
     # Sidebar
     with st.sidebar:
@@ -347,11 +335,15 @@ def main_app():
                 
                 if st.button("📤 Upload & Analyze", type="primary", use_container_width=True):
                     with st.spinner("Processing PDF..."):
+                        # Clean up previous PDF data
+                        cleanup_old_pdfs_from_session()
+                        
                         # Read PDF bytes
                         pdf_bytes = uploaded_file.read()
                         
-                        # Convert to images
-                        images, num_pages = pdf_to_images(pdf_bytes)
+                        # Process PDF with memory-efficient manager
+                        pdf_result = pdf_manager.process_pdf_upload(pdf_bytes)
+                        num_pages = pdf_result['total_pages']
                         
                         # Save to database
                         saved_pdf = db_service.save_pdf(
@@ -365,7 +357,6 @@ def main_app():
                         
                         if saved_pdf:
                             st.session_state.current_pdf_id = saved_pdf['id']
-                            st.session_state.pdf_images = images
                             
                             # Create new conversation
                             conversation = db_service.create_conversation(
@@ -382,7 +373,10 @@ def main_app():
                             Focus on identifying all painting-related items, finishes, and specifications."""
                             
                             with st.spinner("Analyzing PDF..."):
-                                analysis_result = analyze_pdf_with_gpt(images, initial_prompt)
+                                analysis_result = analyze_pdf_with_gpt(
+                                    pdf_result['initial_pages'],
+                                    initial_prompt
+                                )
                                 
                                 # Save messages to database
                                 db_service.add_message_to_conversation(
@@ -398,7 +392,7 @@ def main_app():
                                     analysis_result
                                 )
                                 
-                                # Initialize chat messages
+                                # Initialize chat messages (with memory optimization)
                                 st.session_state.messages = [
                                     {"role": "system", "content": SYSTEM_PROMPT},
                                     {"role": "user", "content": initial_prompt},
@@ -406,6 +400,11 @@ def main_app():
                                 ]
                             
                             st.success(f"✅ PDF uploaded and analyzed! ({num_pages} pages)")
+                            
+                            # Check memory usage and cleanup if needed
+                            if SessionStateManager.auto_cleanup():
+                                st.warning("Memory usage optimized. Some old data was cleared.")
+                            
                             st.rerun()
                         else:
                             st.error("Failed to save PDF")
@@ -422,7 +421,8 @@ def main_app():
         auth.display_user_menu()
     
     # Main content area
-    if st.session_state.current_pdf_id and st.session_state.pdf_images:
+    # Main content area
+    if st.session_state.current_pdf_id:
         # Get current PDF info
         current_pdf = db_service.get_pdf_by_id(st.session_state.current_pdf_id, st.session_state.user_id)
         
@@ -460,7 +460,7 @@ def main_app():
                         response = chat_with_context(
                             st.session_state.messages,
                             prompt,
-                            st.session_state.pdf_images
+                            st.session_state.current_pdf_id
                         )
                         st.markdown(response)
                         
@@ -533,10 +533,12 @@ def load_existing_pdf(pdf_id):
     pdf = db_service.get_pdf_by_id(pdf_id, st.session_state.user_id)
     if pdf:
         with st.spinner("Loading PDF..."):
-            # Convert PDF bytes to images
-            images, num_pages = pdf_to_images(pdf['file_data'])
+            # Clean up previous PDF data
+            cleanup_old_pdfs_from_session()
+            
+            # Process PDF with memory-efficient manager
+            pdf_result = pdf_manager.process_pdf_upload(pdf['file_data'], max_initial_pages=5)
             st.session_state.current_pdf_id = pdf_id
-            st.session_state.pdf_images = images
             
             # Check for existing conversation or create new one
             conversations = db_service.get_user_conversations(st.session_state.user_id, pdf_id)
@@ -565,18 +567,29 @@ def load_conversation(conversation_id):
         if conversation.get('pdf_id'):
             pdf = db_service.get_pdf_by_id(conversation['pdf_id'], st.session_state.user_id)
             if pdf:
-                images, _ = pdf_to_images(pdf['file_data'])
-                st.session_state.pdf_images = images
+                # Clean up old data and process with new manager
+                cleanup_old_pdfs_from_session()
+                pdf_manager.process_pdf_upload(pdf['file_data'], max_initial_pages=5)
                 st.session_state.current_pdf_id = conversation['pdf_id']
         
-        # Load messages
+        # Load messages with optimization
         messages = db_service.get_conversation_messages(conversation_id, st.session_state.user_id)
         st.session_state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for msg in messages:
-            st.session_state.messages.append({
-                "role": msg['role'],
-                "content": msg['content']
-            })
+        
+        # Add messages in batches to prevent memory spikes
+        batch_size = 10
+        for i in range(0, len(messages), batch_size):
+            batch = messages[i:i + batch_size]
+            for msg in batch:
+                st.session_state.messages.append({
+                    "role": msg['role'],
+                    "content": msg['content']
+                })
+            # Force cleanup after each batch
+            gc.collect()
+        
+        # Optimize message history if needed
+        SessionStateManager.optimize_messages()
         
         st.session_state.current_conversation_id = conversation_id
         st.success("Conversation loaded!")
