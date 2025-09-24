@@ -134,8 +134,17 @@ def signup_form():
                     )
                     
                     if user:
-                        st.success("Account created successfully! Please login.")
-                        st.balloons()
+                        # Authenticate the user immediately after creation
+                        auth_user = db_service.authenticate_user(username, password)
+                        if auth_user:
+                            st.session_state.authenticated = True
+                            st.session_state.user = auth_user
+                            st.session_state.user_id = auth_user['id']
+                            st.success("Account created successfully! Logging you in...")
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error("Account created but automatic login failed. Please login manually.")
                     else:
                         st.error("Username already taken. Please choose a different username.")
 
