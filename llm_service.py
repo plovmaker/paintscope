@@ -74,10 +74,7 @@ class ClaudeProvider(LLMProvider):
     """Claude implementation."""
     
     def __init__(self):
-        self.client = Anthropic(
-            api_key=os.getenv("CLAUDE_API_KEY"),
-            http_client=None,  # Let Anthropic create its default client
-        )
+        self.client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
         # Use a current, generally available Claude model
         self.model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
     
