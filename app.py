@@ -6,10 +6,10 @@ Optimized for memory efficiency
 
 from dotenv import load_dotenv
 import streamlit as st
-from openai import OpenAI
 import os
 import gc
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
+from llm_service import LLMService
 from datetime import datetime
 
 # Load environment variables from .env file
@@ -25,8 +25,8 @@ from memory_utils import SessionStateManager, MemoryMonitor, cleanup_old_pdfs_fr
 # Initialize database
 init_db()
 
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize LLM service
+llm_service = LLMService()
 
 # Page configuration
 st.set_page_config(
@@ -217,22 +217,15 @@ def analyze_pdf_with_gpt(page_images: Dict[int, str], initial_prompt: str):
         content.append({
             "type": "image_url",
             "image_url": {
-                "url": f"data:image/png;base64,{page_images[i]}",
+                "url": f"data:image/jpeg;base64,{page_images[i]}",
                 "detail": "high"
             }
         })
     
     messages.append({"role": "user", "content": content})
     
-    # Call GPT-4 Vision
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        max_tokens=4000,
-        temperature=0.3
-    )
-    
-    return response.choices[0].message.content
+    # Call vision completion
+    return llm_service.vision_completion(messages)
 
 
 def chat_with_context(messages_history, user_input, pdf_id=None):
@@ -264,7 +257,7 @@ def chat_with_context(messages_history, user_input, pdf_id=None):
                         content.append({
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/png;base64,{page_images[page_num]}",
+                                "url": f"data:image/jpeg;base64,{page_images[page_num]}",
                                 "detail": "high"
                             }
                         })
@@ -273,15 +266,8 @@ def chat_with_context(messages_history, user_input, pdf_id=None):
     # Check and optimize message history size
     SessionStateManager.optimize_messages()
     
-    # Call GPT-4
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages_history,
-        max_tokens=2000,
-        temperature=0.3
-    )
-    
-    assistant_response = response.choices[0].message.content
+    # Call chat completion
+    assistant_response = llm_service.chat_completion(messages_history)
     messages_history.append({"role": "assistant", "content": assistant_response})
     
     # Check memory usage after response
